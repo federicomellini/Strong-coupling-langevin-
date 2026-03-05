@@ -6,11 +6,25 @@ from heapq import nlargest
 import os 
 
 
-''' Define Velocity Verlet algorithm'''
 
 
-# Define the acceleration function for the system
-def acceleration(xc, vc, xm_values, vm_values, num_mol, param_cav, param_mol, t):
+
+'''Define accelerations based on different hamiltonians'''
+
+def Pauli_Fierz(xc, vc, xm_values, vm_values, num_mol, param_cav, param_mol, t):
+    wc, E = param_cav
+    wm = param_mol[0:num_mol]
+    gamma = param_mol[-1]
+    
+    a_xc = - xc * wc**2  - gamma *(np.sum(xm_values)) #- k * vc
+    
+    a_xm_values = np.zeros(num_mol)
+    for i in range(num_mol):
+        a_xm_values[i] =  -xm_values[i] * wm[i]** 2  - gamma * xc - gamma**2/(wc**2) *(np.sum(xm_values))
+    
+    return a_xc, a_xm_values
+
+def Pauli_Fierz_driven(xc, vc, xm_values, vm_values, num_mol, param_cav, param_mol, t):
     wc, E = param_cav
     wm = param_mol[0:num_mol]
     gamma = param_mol[-1]
@@ -19,12 +33,15 @@ def acceleration(xc, vc, xm_values, vm_values, num_mol, param_cav, param_mol, t)
     
     a_xm_values = np.zeros(num_mol)
     for i in range(num_mol):
-        a_xm_values[i] =  -xm_values[i] * wm[i-1]** 2  - gamma * xc - gamma**2/(2*wc**2) *(np.sum(xm_values))
+        a_xm_values[i] =  -xm_values[i] * wm[i]** 2  - gamma * xc - gamma**2/(wc**2) *(np.sum(xm_values))
     
     return a_xc, a_xm_values
 
-# Define the Velocity-Verlet algorithm
-def velocity_verlet(init_cond, time_points, num_mol, param_cav, param_mol):
+
+#------------------------------------------------------------------------------------------#
+
+''' Define Velocity Verlet algorithm'''
+def velocity_verlet(acceleration, init_cond, time_points, num_mol, param_cav, param_mol):
     n_points = len(time_points)
     dt = time_points[1] - time_points[0]
     
@@ -168,7 +185,7 @@ if __name__ == "__main__":
     time_points = np.arange(0, 2000000, 100)  # Time points from 0 to 10
 
     # Solve the system using Velocity-Verlet algorithm
-    xc_values_eq, vc_values_eq, xm_values_eq, vm_values_eq = velocity_verlet(init_cond, time_points, num_mol, param_cav, param_mol)
+    xc_values_eq, vc_values_eq, xm_values_eq, vm_values_eq = velocity_verlet(Pauli_Fierz_driven, init_cond, time_points, num_mol, param_cav, param_mol)
 
     # Check temperature consistency with equipartition theorem
     message = check_temperature_consistency(vc_values_eq, vm_values_eq, kT, num_mol)

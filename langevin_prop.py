@@ -44,14 +44,15 @@ def velocity_verlet(init_cond, time_points, num_mol, param_cav, param_mol):
         # Calculate current accelerations
         a_xc, a_xm_values = acceleration(xc_values[i], vc_values[i], xm_values[:, i], vm_values[:, i], num_mol, param_cav, param_mol, t)
         
-        # Update positions
+        # Calculate gaussian random variables for the photon
         R_c = sigma_c * dt**(3 / 2) * (0.5*np.random.normal(0.0, 1.0, 1) + 1/(2*np.sqrt(3))*np.random.normal(0.0, 1.0, 1)) # xi and theta
-        #print('current xm_values[:,i]:', xm_values[:,i])
+        
+        # Update positions
         xc_values[i + 1] = xc_values[i] + vc_values[i] * dt + 0.5 * (a_xc - k * vc_values[i]) * dt**2  + R_c.item()
 
         for j in range(num_mol):
+            # Calculate gaussian random variables for each molecule
             R_m = sigma_m * dt ** (3 / 2) * (0.5*np.random.normal(0.0, 1.0, 1) + 1/(2*np.sqrt(3))*np.random.normal(0.0, 1.0, 1))  # xi and theta
-            #print('current R_m:', R_m)
             xm_values[j, i + 1] = xm_values[j, i] + vm_values[j, i] * dt + 0.5 * (a_xm_values[j] - lamb * vm_values[j, i]) * dt ** 2 + R_m.item()
         
         # Calculate new accelerations at the new positions
