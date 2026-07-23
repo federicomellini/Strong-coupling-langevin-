@@ -1,0 +1,129 @@
+================================================================================
+GUIDE TO DEFINING MOLECULAR PARAMETERS IN COUPLED LANGEVIN DYNAMICS
+================================================================================
+
+This document explains how to configure and use the different molecular 
+potentials (Harmonic, Morse, Lennard-Jones, Cubic Anharmonic) implemented 
+in the refactored `langevin_thermostat.py` code. 
+
+The code uses a Factory Pattern (`build_pauli_fierz`) and a dictionary-based 
+parameter passing system (`mol_params`). This architecture allows you to easily 
+swap out the molecular potential energy surface without rewriting the complex 
+light-matter coupling (Pauli-Fierz) terms.
+
+--------------------------------------------------------------------------------
+1. THE DICTIONARY APPROACH (`mol_params`)
+--------------------------------------------------------------------------------
+Instead of passing a flat list of parameters to the Verlet integrator, you now 
+pass a Python dictionary. This allows different potentials to require different 
+physical parameters (e.g., a Morse potential needs a well depth, while a 
+Harmonic potential does not).
+
+At a minimum, ALL dictionaries must contain the light-matter coupling parameter:
+- `lam`: The collective light-matter coupling strength (usually g_c / sqrt(N)).
+
+--------------------------------------------------------------------------------
+2. SUPPORTED POTENTIALS AND THEIR PARAMETERS
+--------------------------------------------------------------------------------
+
+A. Harmonic Oscillator (`force_harmonic`, `potential_harmonic`)
+---------------------------------------------------------------
+The standard approximation for rigid molecular vibrations.
+* Parameters to define:
+  - `wm`: (NumPy array) The fundamental frequencies of the molecules.
+  - `lam`: (Float) Light-matter coupling strength.
+* Example:
+  mol_params = {'wm': freqs, 'lam': lam}
+* Caveats: 
+  Highly stable. It is recommended to ALWAYS use the Harmonic potential 
+  during the initial thermalization/equilibration phase to establish a stable 
+  temperature before switching to complex potentials.
+
+B. Morse Potential (`force_morse`, `potential_morse`)
+-----------------------------------------------------
+Used to model realistic bond dissociation and anharmonicity. 
+* Parameters to define:
+  - `D_e`: (Float) The dissociation energy (well depth).
+  - `a`: (Float) The width parameter controlling the "stiffness" of the bond.
+  - `lam`: (Float) Light-matter coupling strength.
+* Example:
+  mol_params = {'D_e': 0.15, 'a': 1.2, 'lam': lam}
+* Caveats: 
+  If the kinetic energy of a molecule exceeds `D_e` (due to high kT or a strong 
+  cavity drive), the bond will break. The coordinate `x` will grow indefinitely, 
+  which may cause issues with the Dipole Self-Energy term or periodic boundaries 
+  if not accounted for.
+
+C. Cubic Anharmonic Oscillator (`force_cubic`, `potential_cubic`)
+-----------------------------------------------------------------
+A simple Taylor-expansion approach to anharmonicity.
+* Parameters to define:
+  - `wm`: (NumPy array) The fundamental frequencies of the molecules.
+  - `alpha`: (Float) The strength of the cubic anharmonicity.
+  - `lam`: (Float) Light-matter coupling strength.
+* Example:
+  mol_params = {'wm': freqs, 'alpha': 0.005, 'lam': lam}
+* Caveats: 
+  CRITICAL: The cubic potential is unbounded from below (V(x) -> -infinity 
+  as x -> -infinity). If the temperature (kT) is too high or the perturbation 
+  is too strong, the classical trajectory will "escape" the local well and 
+  accelerate to infinity, crashing your simulation with NaN values. Use 
+  small values for `alpha` and carefully monitor maximum displacements.
+
+D. Lennard-Jones Potential (`force_lennard_jones`)
+--------------------------------------------------
+Used for non-bonded Van der Waals interactions.
+* Parameters to define:
+  - `epsilon`: (Float) Depth of the potential well.
+  - `sigma`: (Float) Distance at which the inter-particle potential is zero.
+  - `r_eq`: (Float) The equilibrium distance (minimum of the potential).
+  - `lam`: (Float) Light-matter coupling strength.
+* Example:
+  mol_params = {'epsilon': 0.05, 'sigma': 1.0, 'r_eq': 1.122, 'lam': lam}
+* Caveats: 
+  Because the variables `xm_values` in your code represent DISPLACEMENTS from 
+  equilibrium, the Lennard-Jones force function internally shifts the coordinate 
+  by `r_eq`. The repulsive $1/r^{12}$ core is extremely steep. If a molecule gets 
+  pushed too far into the repulsive core, the forces will become massive, requiring 
+  a significantly smaller time step (`dt` or `t_step`) to integrate stably.
+
+--------------------------------------------------------------------------------
+3. HOW TO SWITCH POTENTIALS IN YOUR SCRIPT
+--------------------------------------------------------------------------------
+
+Step 1: Define the parameter dictionary.
+    mol_params_morse = {
+        'D_e': 0.1, 
+        'a': 1.5, 
+        'lam': lam
+    }
+
+Step 2: Build the Hamiltonian using the Factory function.
+    # Pass the specific force function you want to use
+    PF_morse = build_pauli_fierz(force_morse, driven=False)
+
+Step 3: Run the Verlet integrator.
+    xc, vc, xm, vm = velocity_verlet(
+        PF_morse, init_cond, time_points, num_mol, param_cav, mol_params_morse
+    )
+
+Step 4: Calculate energies for analysis (e.g., IPR).
+    # Make sure to pass the corresponding potential function!
+    energies = calc_energies(xm, vm, potential_morse, mol_params_morse)
+
+--------------------------------------------------------------------------------
+4. BEST PRACTICES & THERMALIZATION CAVEAT
+--------------------------------------------------------------------------------
+Thermalizing a system of anharmonic or Morse oscillators can be tricky. 
+The equipartition theorem (0.5 * kT per degree of freedom) cleanly applies to 
+harmonic systems, but gets complicated for strongly anharmonic ones. 
+
+Recommended Workflow:
+1. Run the `t_eq` (equilibration) loop using `build_pauli_fierz(force_harmonic)`.
+2. Ensure the temperature consistency check passes.
+3. Take the final state of the harmonic equilibration as the `init_cond` for propagation.
+4. Redefine `mol_params` with your anharmonic parameters.
+5. Run the final propagation using `build_pauli_fierz(force_morse)` (or cubic, etc.).
+6. Keep an eye on the time step (`t_step`). Anharmonicities create higher-frequency 
+   components that may require a smaller `t_step` to conserve energy accurately 
+   compared to the purely harmonic case.
